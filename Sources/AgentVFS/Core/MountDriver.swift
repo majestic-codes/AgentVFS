@@ -103,6 +103,11 @@ public protocol MountDriver: Sendable {
     /// `nil`, the default, means the file has no local path and is read through `readExactBytes`.
     func openLocalFile(for file: EntryRef) throws -> LocalFile?
 
+    /// `true` when the driver keeps its files in memory and hands out their bytes without a copy,
+    /// so a tool that caches downloads has no reason to keep them a second time. `false`, the
+    /// default, means reading a file costs the driver a download or a read from disk.
+    var holdsFilesInMemory: Bool { get }
+
     /// A number that changes whenever the driver's files change, for drivers whose content can
     /// change while the workspace is open (such as a mutable `InMemoryDriver`). The workspace
     /// checks it before each operation and drops what it cached for the mount when it differs.
@@ -166,6 +171,9 @@ extension MountDriver {
 
     /// `nil`: the content never changes on its own.
     public var revision: Int? { nil }
+
+    /// `false`: reading a file costs a download or a read from disk.
+    public var holdsFilesInMemory: Bool { false }
 
     /// `nil`: the file has no local path.
     public func openLocalFile(for file: EntryRef) throws -> LocalFile? { nil }

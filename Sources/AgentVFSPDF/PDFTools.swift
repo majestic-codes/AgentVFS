@@ -34,11 +34,13 @@ public struct PDFOptions: Sendable {
     /// The default `maxDownloadBytes`.
     public static let defaultMaxDownloadBytes = 1_000_000_000
     #endif
+    /// The default `downloadCacheBytes`: 256 MB, because the cache is memory.
+    public static let defaultDownloadCacheBytes = 256_000_000
 
     /// Limits with defaults that suit an agent on a phone or a laptop.
     public init(
         maxDownloadBytes: Int = Self.defaultMaxDownloadBytes,
-        downloadCacheBytes: Int = 1_000_000_000,
+        downloadCacheBytes: Int = defaultDownloadCacheBytes,
         textCacheBytes: Int = 64_000_000,
         timeout: Duration = .seconds(30),
         maxRecognizedPages: Int = 10,

@@ -14,13 +14,13 @@ import Testing
 struct DownloadCacheTests {
     private static let path = "/workspace/docs/a.txt"
 
-    private func fileSystem(_ driver: InMemoryDriver) throws -> WorkspaceFileSystem {
+    private func fileSystem(_ driver: some MountDriver) throws -> WorkspaceFileSystem {
         try WorkspaceFileSystem(mounts: [WorkspaceMount(name: "docs", driver: driver)])
     }
 
     @Test("a file from a driver is read once into memory and reused")
     func reuse() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789"])
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 1_000)
         let first = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
@@ -36,7 +36,7 @@ struct DownloadCacheTests {
 
     @Test("the oldest file is evicted when the capacity is passed")
     func evictionByCapacity() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 15)
         _ = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
@@ -51,7 +51,7 @@ struct DownloadCacheTests {
 
     @Test("an evicted file stays readable by the lease that holds it")
     func leaseOutlivesEviction() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 15)
         let first = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
@@ -61,7 +61,7 @@ struct DownloadCacheTests {
 
     @Test("a file larger than the capacity is read for one use and not kept")
     func largerThanCapacity() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789"])
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 5)
         let lease = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
@@ -72,7 +72,7 @@ struct DownloadCacheTests {
 
     @Test("a changed file version replaces the cached data")
     func versionChange() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "before"])
+        let driver = try RemoteDriver(texts: ["a.txt": "before"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 1_000)
         let before = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
@@ -85,7 +85,7 @@ struct DownloadCacheTests {
 
     @Test("a file over the limit is refused")
     func tooLarge() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789"])
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789"])
         let fileSystem = try fileSystem(driver)
         let cache = DownloadCache(capacity: 1_000)
         await #expect(throws: VFSError.fileTooLarge(path: Self.path, size: 10, limit: 5)) {
@@ -106,5 +106,36 @@ struct DownloadCacheTests {
             return
         }
         #expect(try lease.text() == "0123456789")
+    }
+
+    @Test("a file an in-memory driver holds is handed through and not cached")
+    func inMemoryDriverFile() async throws {
+        let bytes = Data("0123456789".utf8)
+        let driver = try InMemoryDriver(files: ["a.txt": bytes])
+        let fileSystem = try fileSystem(driver)
+        let cache = DownloadCache(capacity: 1_000)
+        let first = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
+        let second = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
+        guard case let .data(leased) = first.source, case let .data(again) = second.source else {
+            Issue.record("a file held in memory is not leased as data")
+            return
+        }
+        #expect(leased == bytes)
+        #expect(again == bytes)
+        #expect(await fileSystem.metrics().filesRead == 2, "nothing was kept by the cache")
+    }
+
+    @Test("a new version of a path replaces the old entry instead of piling up")
+    func oneEntryPerPath() async throws {
+        let driver = try RemoteDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
+        let fileSystem = try fileSystem(driver)
+        let cache = DownloadCache(capacity: 25)
+        _ = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
+        _ = try await cache.lease(path: "/workspace/docs/b.txt", fileSystem: fileSystem, maxBytes: 100)
+        try driver.put("a.txt", text: "ABCDEFGHIJ")
+        _ = try await cache.lease(path: Self.path, fileSystem: fileSystem, maxBytes: 100)
+        #expect(await fileSystem.metrics().filesRead == 3)
+        _ = try await cache.lease(path: "/workspace/docs/b.txt", fileSystem: fileSystem, maxBytes: 100)
+        #expect(await fileSystem.metrics().filesRead == 3, "the other file was not evicted by the old version")
     }
 }

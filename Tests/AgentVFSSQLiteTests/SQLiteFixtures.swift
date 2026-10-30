@@ -74,3 +74,28 @@ func localWorkspace(_ root: URL) throws -> WorkspaceFileSystem {
 
 /// Counts up from 1 without end, for queries that never finish on their own.
 let endlessCounter = "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c)"
+
+/// Files that cost a read each time, like a driver over a network: it does not hold its files in memory.
+struct RemoteDriver: MountDriver {
+    let files: InMemoryDriver
+
+    var info: MountInfo { files.info }
+    var revision: Int? { files.revision }
+    var listingIsCheap: Bool { true }
+
+    init(files: [String: Data]) throws {
+        self.files = try InMemoryDriver(files: files)
+    }
+
+    func list(_ directory: EntryRef) async throws -> [DriverEntry] {
+        try await files.list(directory)
+    }
+
+    func read(_ file: EntryRef) async throws -> FileContent {
+        try await files.read(file)
+    }
+
+    func readExactBytes(_ file: EntryRef) async throws -> Data {
+        try await files.readExactBytes(file)
+    }
+}

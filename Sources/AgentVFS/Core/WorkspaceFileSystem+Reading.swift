@@ -19,8 +19,11 @@ struct ResolvedFile {
     /// What the driver needs to read the file.
     var ref: EntryRef { EntryRef(path: path.mountPath, id: entry.id, size: entry.size) }
 
+    /// Names the file inside its workspace, whatever its content.
+    var location: String { [versionScope, mount.name, path.mountPath].joined(separator: "\u{0}") }
+
     /// Changes whenever the content does, when the source can tell.
-    var version: String? { entry.id.map { [versionScope, mount.name, path.mountPath, $0].joined(separator: "\u{0}") } }
+    var version: String? { entry.id.map { [location, $0].joined(separator: "\u{0}") } }
 }
 
 /// A file's bytes as `readFile` returns them.
@@ -136,7 +139,7 @@ extension WorkspaceFileSystem {
     }
 
     /// Resolves a path that must name a regular file. Throws for a directory, a symbolic link or a submodule.
-    private func resolveFile(_ path: String) async throws -> ResolvedFile {
+    func resolveFile(_ path: String) async throws -> ResolvedFile {
         let virtualPath = try VFSPath(normalizing: path, relativeTo: .root)
         guard case let .entry(mount, child, resolvedPath) = try await resolve(virtualPath) else {
             throw VFSError.isADirectory(virtualPath.description)

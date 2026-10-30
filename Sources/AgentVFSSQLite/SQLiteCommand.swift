@@ -37,19 +37,24 @@ public struct SQLiteCommand: WorkspaceCommand {
     #endif
     /// Wall-clock limit for one command's queries. The command's own `OutputLimits.timeLimit` applies too.
     public let timeout: Duration
+    /// The default `downloadCacheBytes`: 256 MB, because the cache is memory.
+    public static let defaultDownloadCacheBytes = 256_000_000
     /// Memory kept for databases read from drivers, so the next query on them needs no new read.
+    /// Databases in write-ahead-log format are also kept as the rollback-journal copy queries read,
+    /// within the same amount again.
     public let downloadCacheBytes: Int
     /// Bytes one query may write to temporary files, for sorting and grouping. A query that needs
     /// more stops with an error.
     public let maxTemporaryBytes: Int
 
     private let downloads: DownloadCache
+    private let rollbackImages: RollbackImages
 
     /// A command with its own download cache. Limits must be positive.
     public init(
         maxDownloadBytes: Int = Self.defaultMaxDownloadBytes,
         timeout: Duration = .seconds(30),
-        downloadCacheBytes: Int = 2_000_000_000,
+        downloadCacheBytes: Int = defaultDownloadCacheBytes,
         maxTemporaryBytes: Int = Self.defaultMaxTemporaryBytes
     ) {
         precondition(maxDownloadBytes > 0, "SQLiteCommand.maxDownloadBytes must be positive")
@@ -60,6 +65,7 @@ public struct SQLiteCommand: WorkspaceCommand {
         self.downloadCacheBytes = downloadCacheBytes
         self.maxTemporaryBytes = maxTemporaryBytes
         self.downloads = DownloadCache(capacity: downloadCacheBytes)
+        self.rollbackImages = RollbackImages(capacity: downloadCacheBytes)
     }
 
     public func run(_ arguments: [ShellToken], in context: CommandContext) async throws -> CommandOutput {
@@ -95,7 +101,7 @@ public struct SQLiteCommand: WorkspaceCommand {
         )
         let watchdog = Connection.Watchdog(deadline: min(ContinuousClock.now + timeout, context.deadline))
         let query = Query(
-            source: database.source,
+            source: rollbackImages.readable(database),
             sql: invocation.sql,
             maxTemporaryBytes: maxTemporaryBytes
         )

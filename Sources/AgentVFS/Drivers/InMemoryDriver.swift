@@ -155,6 +155,8 @@ public final class InMemoryDriver: MountDriver {
 
     public var listingIsCheap: Bool { true }
 
+    public var holdsFilesInMemory: Bool { true }
+
     public var revision: Int? { state.withLock { $0.revision } }
 
     private var directories: [String: [DriverEntry]] {

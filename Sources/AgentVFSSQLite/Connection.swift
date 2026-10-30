@@ -19,7 +19,8 @@ final class Connection {
     private var valueLimit = maxValueBytes
 
     /// Runs `body` on a read-only connection to the database in `source`, then closes it. A
-    /// database in memory is read where it is, so it stays pinned while the connection is open.
+    /// database in memory is read where it is, so it stays pinned while the connection is open. A
+    /// database in memory must not be in write-ahead-log format (see `RollbackImages`).
     static func withConnection<Result>(
         source: DownloadCache.Source,
         watchdog: Watchdog,
@@ -35,7 +36,7 @@ final class Connection {
             )
             return try withExtendedLifetime(connection) { try body(connection) }
         case let .data(data):
-            return try rollbackJournalImage(of: data).withUnsafeBytes { bytes in
+            return try data.withUnsafeBytes { bytes in
                 let connection = try Connection(
                     memory: bytes,
                     watchdog: watchdog,
@@ -44,19 +45,6 @@ final class Connection {
                 return try withExtendedLifetime(connection) { try body(connection) }
             }
         }
-    }
-
-    /// A database in memory has no `-wal` file to read, and SQLite opens a database file written in
-    /// write-ahead-log format only with one. Such an image is read as of its last checkpoint, as a
-    /// rollback-journal database, which takes a copy with the two format version bytes changed.
-    private static func rollbackJournalImage(of data: Data) -> Data {
-        let writeVersion = data.startIndex + 18
-        let readVersion = data.startIndex + 19
-        guard data.count > 19, data[writeVersion] == 2 || data[readVersion] == 2 else { return data }
-        var image = data
-        image[writeVersion] = 1
-        image[readVersion] = 1
-        return image
     }
 
     private init(watchdog: Watchdog, maxTemporaryBytes: Int) throws {

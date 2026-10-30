@@ -196,7 +196,7 @@ struct SQLiteCommandTests {
         let one = try database("CREATE TABLE a(x); INSERT INTO a VALUES (1);")
         let two = try database("CREATE TABLE b(x); INSERT INTO b VALUES (2);")
         let command = SQLiteCommand(downloadCacheBytes: one.count + 10)
-        let driver = try InMemoryDriver(files: ["one.db": one, "two.db": two])
+        let driver = try RemoteDriver(files: ["one.db": one, "two.db": two])
         let fileSystem = try workspace("d", driver: driver)
         let shell = CommandInterpreter(fileSystem: fileSystem, commands: [command])
         #expect(await shell.run("sqlite3 d/one.db 'SELECT x FROM a'").output == "1")

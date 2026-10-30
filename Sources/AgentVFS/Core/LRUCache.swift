@@ -7,23 +7,23 @@
 //
 
 /// A cost-bounded least-recently-used cache. Not thread-safe. Owned by one actor.
-struct LRUCache<Key: Hashable, Value> {
+package struct LRUCache<Key: Hashable, Value> {
     private struct Slot {
         var value: Value
         var cost: Int
         var lastUse: UInt64
     }
 
-    let capacity: Int
+    package let capacity: Int
     private var slots: [Key: Slot] = [:]
     private var clock: UInt64 = 0
-    private(set) var totalCost = 0
+    package private(set) var totalCost = 0
 
-    init(capacity: Int) {
+    package init(capacity: Int) {
         self.capacity = capacity
     }
 
-    mutating func value(for key: Key) -> Value? {
+    package mutating func value(for key: Key) -> Value? {
         guard var slot = slots[key] else { return nil }
         clock += 1
         slot.lastUse = clock
@@ -31,7 +31,7 @@ struct LRUCache<Key: Hashable, Value> {
         return slot.value
     }
 
-    mutating func removeAll(where shouldRemove: (Key) -> Bool) {
+    package mutating func removeAll(where shouldRemove: (Key) -> Bool) {
         for key in slots.keys where shouldRemove(key) {
             if let slot = slots.removeValue(forKey: key) {
                 totalCost -= slot.cost
@@ -39,14 +39,14 @@ struct LRUCache<Key: Hashable, Value> {
         }
     }
 
-    mutating func removeAll() {
+    package mutating func removeAll() {
         slots.removeAll()
         totalCost = 0
     }
 
     /// Stores `value`, evicting the least recently used entries until it fits.
     /// Values costing more than the whole capacity are not stored.
-    mutating func insert(_ value: Value, cost: Int, for key: Key) {
+    package mutating func insert(_ value: Value, cost: Int, for key: Key) {
         if let existing = slots.removeValue(forKey: key) {
             totalCost -= existing.cost
         }
