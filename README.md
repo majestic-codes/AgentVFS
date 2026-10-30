@@ -170,15 +170,14 @@ let shell = CommandInterpreter(fileSystem: fileSystem, commands: [SQLiteCommand(
     so multi-gigabyte databases work: on a 1.9 GB database the process used up to 13 MB of memory. SQLite gets the
     descriptor the driver already checked (`/dev/fd/N`), not a path, so swapping the file for a link achieves
     nothing. Because of this, changes still held only in the `-wal` file are not visible until a checkpoint.
-  - **A database from another source** (a network driver, an API, memory) is downloaded once to a temporary file on
-    disk through `MountDriver.download(_:to:)` and opened from there. The download limit `maxDownloadBytes` is 1 GB
-    (200 MB on iOS), and `downloadCacheBytes` (2 GB) caps the space for copies. The default `download` holds the file
-    in memory once. A driver for large files overrides it and writes a stream (for example,
-    `URLSession.download(for:)`).
+  - **A database from another source** (a network driver, an API, memory) is read once into memory through
+    `MountDriver.readExactBytes(_:)` and queried there (`sqlite3_deserialize`, read-only), so no copy of it is written
+    to disk. The read limit `maxDownloadBytes` is 1 GB (200 MB on iOS), and `downloadCacheBytes` (2 GB) caps the memory
+    kept for databases that were read, evicted least recently used first. A database in write-ahead-log format is
+    read as of its last checkpoint, from a copy with its format version bytes changed.
   - **Safety.** The authorizer allows reading only: any write (including to temp), `CREATE TEMP`, `ATTACH`,
     `VACUUM INTO`, transactions and pragmas with a value are denied, and the pragmas that read the schema remain.
-    Extensions are not loaded, and symbolic links are not opened (`SQLITE_OPEN_NOFOLLOW`). Sorting spills to disk, but
-    temporary files are capped (`maxTemporaryBytes`, 256 MB, 64 MB on iOS). A result row is capped at 32 MB, and a
+    Extensions are not loaded, and symbolic links are not opened (`SQLITE_OPEN_NOFOLLOW`). Sorting spills to temporary files that SQLite unlinks when it creates them, and they are capped (`maxTemporaryBytes`, 256 MB, 64 MB on iOS). A result row is capped at 32 MB, and a
     cell is read only as far as the output limit. Each query has a time limit (`timeout`, 30 s, but no longer than
     `OutputLimits.timeLimit`), runs outside the Swift concurrency pool and stops when its task is cancelled.
   - So that a tool can open a file in place, a driver implements `MountDriver.openLocalFile(for:)` and returns an
@@ -218,7 +217,7 @@ let shell = CommandInterpreter(fileSystem: fileSystem, commands: [SQLiteCommand(
     through Vision (up to 10 pages per command, `PDFOptions.maxRecognizedPages`). Recognized text is cached, so
     `pdfgrep` then searches it too.
   - Files come through a `DownloadCache`, as in `sqlite3`, but a separate one (`PDFOptions.downloadCacheBytes`,
-    1 GB): local files are read from disk within `maxDownloadBytes`, others are downloaded once. Extracted text is
+    1 GB of memory): local files are read from disk within `maxDownloadBytes`, others are read once into memory. Extracted text is
     cached by file version (`textCacheBytes`, 64 MB). The version includes the workspace identifier and the path, so a
     cache shared by several sessions never mixes their files. A password-protected PDF is not opened.
   - **Protection from malicious PDFs.** A page whose content stream decodes to more than `maxPageContentBytes` (4 MB)
@@ -402,8 +401,18 @@ The agent cannot change anything, leave `/workspace` or bring the app down. What
 - **API errors.** The agent sees the text of an error thrown by `fetchPage`, so it must not contain tokens or URLs
   that carry them. `describeError:` can turn an error into safe text.
 - **Several sessions.** Each has its own `CommandInterpreter` and working directory. The download and PDF text caches
-  are keyed by a version that includes the workspace identifier, and temporary files live in UUID-named folders and
-  are removed once nobody reads them.
+  are keyed by a version that includes the workspace identifier, and nothing is written to disk for them.
+
+## Upgrading to 0.2.0
+
+Tools no longer write plaintext copies of workspace files to disk. This changes the API:
+
+- `MountDriver.download(_:to:)` and `WorkspaceFileSystem.download(path:to:maxBytes:)` are removed. A driver for large
+  files serves them through `readExactBytes(_:)`, and a tool keeps them in memory.
+- `DownloadCache.init(capacity:label:)` is `DownloadCache.init(capacity:)`, and its capacity is memory, not disk space.
+- `DownloadCache.Lease` has `source` (`.file(LocalFile)` or `.data(Data)`) in place of `url` and `isCopy`, and no
+  `finish()`: a lease needs no release.
+- `OpenedDocument.close()` of the PDF commands is internal and gone.
 
 ## License
 

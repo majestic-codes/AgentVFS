@@ -83,7 +83,8 @@ public protocol MountDriver: Sendable {
     func read(_ files: [EntryRef]) async throws -> [String: FileContent]
 
     /// The exact bytes of a file: one that `read` returned as `.transcodedText` or `.truncated`, or
-    /// a binary file a tool such as `sqlite3` parses itself. The default works for text only.
+    /// a binary file a tool such as `sqlite3` parses itself. The tool keeps it in memory. The default
+    /// works for text only.
     func readExactBytes(_ file: EntryRef) async throws -> Data
 
     /// Paths inside the mount that may contain `term`, from the source's own search index.
@@ -95,12 +96,6 @@ public protocol MountDriver: Sendable {
 
     /// `true` when listing a directory costs no network request, so walks need no budget.
     var listingIsCheap: Bool { get }
-
-    /// Writes a file's exact bytes to `destination`, for tools that need a large file on disk,
-    /// such as `sqlite3` with a database from an API. The default holds the whole file in memory
-    /// once (through `readExactBytes`). A driver for large files streams it instead, for example
-    /// with `URLSession.download(for:)`.
-    func download(_ file: EntryRef, to destination: URL) async throws
 
     /// The file on the local disk behind an entry, opened, for tools that are better off opening it
     /// in place than reading it whole, such as `sqlite3` with a database of several gigabytes. The
@@ -174,18 +169,6 @@ extension MountDriver {
 
     /// `nil`: the file has no local path.
     public func openLocalFile(for file: EntryRef) throws -> LocalFile? { nil }
-
-    /// Reads the whole file with `readExactBytes` and writes it to `destination`. Throws
-    /// `VFSError.unreadable` when the write fails.
-    public func download(_ file: EntryRef, to destination: URL) async throws {
-        let data = try await readExactBytes(file)
-        do {
-            try data.write(to: destination)
-        } catch {
-            let reason = "could not write \(destination.lastPathComponent): \(error.localizedDescription)"
-            throw VFSError.unreadable(path: file.path, reason: reason)
-        }
-    }
 }
 
 /// A driver mounted under a name.

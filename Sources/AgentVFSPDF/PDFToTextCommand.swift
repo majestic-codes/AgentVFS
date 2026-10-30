@@ -36,7 +36,6 @@ struct PDFToTextCommand: WorkspaceCommand {
         guard let file = await context.openPDF(invocation.file, library: library, command: name, output: &output) else {
             return output
         }
-        defer { file.close() }
         let range = try PageRange.bounds(
             first: invocation.first,
             last: invocation.last,

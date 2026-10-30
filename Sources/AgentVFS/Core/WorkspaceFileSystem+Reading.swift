@@ -126,29 +126,6 @@ extension WorkspaceFileSystem {
         return try await virtualizingErrors(file.path) { try file.mount.driver.openLocalFile(for: ref) }
     }
 
-    /// Writes a file's exact bytes to `destination` through its driver's `download`, refusing files
-    /// larger than `maxBytes`. Returns the version, like `readBinary`.
-    @discardableResult
-    public func download(path: String, to destination: URL, maxBytes: Int) async throws -> String? {
-        let file = try await resolveFile(path)
-        let resolvedPath = file.path
-        if let size = file.entry.size, size > maxBytes {
-            throw VFSError.fileTooLarge(path: resolvedPath.description, size: size, limit: maxBytes)
-        }
-        let ref = file.ref
-        try await virtualizingErrors(resolvedPath) { try await file.mount.driver.download(ref, to: destination) }
-        let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
-        guard let written = attributes[.size] as? Int else {
-            throw VFSError.unreadable(path: resolvedPath.description, reason: "the downloaded file has no size")
-        }
-        guard written <= maxBytes else {
-            try FileManager.default.removeItem(at: destination)
-            throw VFSError.fileTooLarge(path: resolvedPath.description, size: written, limit: maxBytes)
-        }
-        counters.filesRead += 1
-        return file.version
-    }
-
     /// The version `readBinary` would report for a file, without reading it.
     public func version(path: String) async throws -> String? {
         let virtualPath = try VFSPath(normalizing: path, relativeTo: .root)

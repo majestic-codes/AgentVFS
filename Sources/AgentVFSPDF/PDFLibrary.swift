@@ -11,7 +11,7 @@ import Foundation
 import PDFKit
 import Synchronization
 
-/// What the PDF commands share: downloaded files and the text already taken from them, so a
+/// What the PDF commands share: files read from drivers and the text already taken from them, so a
 /// `pdfgrep` after `pdfinfo` does not parse the document again.
 final class PDFLibrary: Sendable {
     let options: PDFOptions
@@ -20,48 +20,44 @@ final class PDFLibrary: Sendable {
 
     init(options: PDFOptions) {
         self.options = options
-        downloads = DownloadCache(capacity: options.downloadCacheBytes, label: "PDF")
+        downloads = DownloadCache(capacity: options.downloadCacheBytes)
         texts = Mutex(TextCache(capacity: options.textCacheBytes))
     }
 
-    /// Opens the PDF at the virtual `path`. Call `close()` on the result when done.
+    /// Opens the PDF at the virtual `path`.
     func open(_ path: String, fileSystem: WorkspaceFileSystem) async throws -> OpenedDocument {
         let lease = try await downloads.lease(path: path, fileSystem: fileSystem, maxBytes: options.maxDownloadBytes)
-        do {
-            let data = try contents(of: lease, path: path)
-            let document = try Self.document(from: data, path: path)
-            return OpenedDocument(
-                path: path,
-                data: data,
-                document: document,
-                cacheKey: lease.version,
-                fileSize: data.count,
-                lease: lease,
-                library: self
-            )
-        } catch {
-            lease.finish()
-            throw error
-        }
+        let data = try contents(of: lease.source, path: path)
+        let document = try Self.document(from: data, path: path)
+        return OpenedDocument(
+            path: path,
+            data: data,
+            document: document,
+            cacheKey: lease.version,
+            fileSize: data.count,
+            library: self
+        )
     }
 
-    /// A downloaded copy never changes, so it is mapped. A file in place may shrink while it is
-    /// open, which would crash a process reading it through a mapping, so it is read whole.
-    private func contents(of lease: DownloadCache.Lease, path: String) throws -> Data {
-        if lease.isCopy {
-            return try Data(contentsOf: lease.url, options: .alwaysMapped)
-        }
-        let handle = try FileHandle(forReadingFrom: lease.url)
-        let read = Result { () throws -> Data in
-            let size = try handle.seekToEnd()
-            guard size <= UInt64(options.maxDownloadBytes) else {
-                throw VFSError.fileTooLarge(path: path, size: Int(clamping: size), limit: options.maxDownloadBytes)
+    /// A file in place may shrink while it is open, which would crash a process reading it
+    /// through a mapping, so it is read whole.
+    private func contents(of source: DownloadCache.Source, path: String) throws -> Data {
+        switch source {
+        case let .data(data):
+            return data
+        case let .file(localFile):
+            let handle = try FileHandle(forReadingFrom: localFile.url)
+            let read = Result { () throws -> Data in
+                let size = try handle.seekToEnd()
+                guard size <= UInt64(options.maxDownloadBytes) else {
+                    throw VFSError.fileTooLarge(path: path, size: Int(clamping: size), limit: options.maxDownloadBytes)
+                }
+                try handle.seek(toOffset: 0)
+                return try handle.readToEnd() ?? Data()
             }
-            try handle.seek(toOffset: 0)
-            return try handle.readToEnd() ?? Data()
+            try handle.close()
+            return try read.get()
         }
-        try handle.close()
-        return try read.get()
     }
 
     private static func document(from data: Data, path: String) throws -> PDFDocument {
@@ -164,7 +160,6 @@ final class OpenedDocument: @unchecked Sendable {
     private var pageDocument: PDFDocument
     private var pagesFromPageDocument = 0
     private let cacheKey: String?
-    private let lease: DownloadCache.Lease
     private let library: PDFLibrary
 
     init(
@@ -173,7 +168,6 @@ final class OpenedDocument: @unchecked Sendable {
         document: PDFDocument,
         cacheKey: String?,
         fileSize: Int,
-        lease: DownloadCache.Lease,
         library: PDFLibrary
     ) {
         self.path = path
@@ -183,14 +177,11 @@ final class OpenedDocument: @unchecked Sendable {
         pageDocument = document
         self.cacheKey = cacheKey
         self.fileSize = fileSize
-        self.lease = lease
         self.library = library
     }
 
     /// Read once, because a page worker abandoned at the time limit may still be using `document`.
     let pageCount: Int
-
-    func close() { lease.finish() }
 
     /// The text of the page at the 0-based `index`: recognized text when an earlier `--ocr` read
     /// it, otherwise its text layer. `nil` when reading it passed `deadline`.

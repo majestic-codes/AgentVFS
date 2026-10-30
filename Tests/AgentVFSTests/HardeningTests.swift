@@ -200,31 +200,11 @@ struct IsolationTests {
         let second = try WorkspaceFileSystem(mounts: [
             WorkspaceMount(name: "docs", driver: secondDriver)
         ])
-        let cache = DownloadCache(capacity: 1_000, label: "Test")
+        let cache = DownloadCache(capacity: 1_000)
         let firstLease = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: first, maxBytes: 100)
         let secondLease = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: second, maxBytes: 100)
-        defer {
-            firstLease.finish()
-            secondLease.finish()
-        }
-        #expect(try String(contentsOf: firstLease.url, encoding: .utf8) == "first")
-        #expect(try String(contentsOf: secondLease.url, encoding: .utf8) == "second")
-    }
-
-    @Test("an evicted download stays on disk until its lease finishes")
-    func leasedFileOutlivesEviction() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
-        let fileSystem = try WorkspaceFileSystem(mounts: [
-            WorkspaceMount(name: "docs", driver: driver)
-        ])
-        let cache = DownloadCache(capacity: 15, label: "Test")
-        let first = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: fileSystem, maxBytes: 100)
-        let second = try await cache.lease(path: "/workspace/docs/b.txt", fileSystem: fileSystem, maxBytes: 100)
-        #expect(FileManager.default.fileExists(atPath: first.url.path))
-        first.finish()
-        #expect(FileManager.default.fileExists(atPath: first.url.path) == false)
-        second.finish()
-        #expect(FileManager.default.fileExists(atPath: second.url.path))
+        #expect(try firstLease.text() == "first")
+        #expect(try secondLease.text() == "second")
     }
 
     @Test("a local file with a second hard link is not read")

@@ -80,15 +80,13 @@ struct MountReplacementTests {
             WorkspaceMount(name: "keep", driver: InMemoryDriver()),
             WorkspaceMount(name: "docs", driver: first)
         ])
-        let cache = DownloadCache(capacity: 1_000, label: "Test")
+        let cache = DownloadCache(capacity: 1_000)
         let firstLease = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: fileSystem, maxBytes: 100)
-        firstLease.finish()
         try await fileSystem.removeMount(named: "docs")
         let second = try InMemoryDriver(texts: ["a.txt": "second"])
         try await fileSystem.addMount(WorkspaceMount(name: "docs", driver: second))
         let secondLease = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: fileSystem, maxBytes: 100)
-        defer { secondLease.finish() }
-        #expect(try String(contentsOf: secondLease.url, encoding: .utf8) == "second")
+        #expect(try secondLease.text() == "second")
     }
 }
 
@@ -108,21 +106,5 @@ struct WorkspaceCheckTests {
         let expected = VFSError.invalidPath("'\(path)' is not a file path the workspace can show")
         #expect(throws: expected) { try InMemoryDriver().put(path, text: "x") }
         #expect(throws: expected) { try InMemoryDriver(texts: [path: "x"]) }
-    }
-
-    @Test("finishing a lease twice does not release a copy another lease still uses")
-    func leaseFinishedTwice() async throws {
-        let driver = try InMemoryDriver(texts: ["a.txt": "0123456789", "b.txt": "abcdefghij"])
-        let fileSystem = try WorkspaceFileSystem(mounts: [WorkspaceMount(name: "docs", driver: driver)])
-        let cache = DownloadCache(capacity: 15, label: "Test")
-        let first = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: fileSystem, maxBytes: 100)
-        let second = try await cache.lease(path: "/workspace/docs/a.txt", fileSystem: fileSystem, maxBytes: 100)
-        first.finish()
-        first.finish()
-        let other = try await cache.lease(path: "/workspace/docs/b.txt", fileSystem: fileSystem, maxBytes: 100)
-        #expect(FileManager.default.fileExists(atPath: second.url.path), "the second lease still uses the copy")
-        second.finish()
-        other.finish()
-        #expect(FileManager.default.fileExists(atPath: second.url.path) == false)
     }
 }

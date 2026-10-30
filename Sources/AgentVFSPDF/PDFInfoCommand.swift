@@ -31,7 +31,6 @@ struct PDFInfoCommand: WorkspaceCommand {
         guard let file = await context.openPDF(operand, library: library, command: name, output: &output) else {
             return output
         }
-        defer { file.close() }
         // The document is read before the text summary, which may abandon a page still in use at the time limit.
         let metadata = metadata(of: file.document)
         let outline = Self.outline(of: file.document)

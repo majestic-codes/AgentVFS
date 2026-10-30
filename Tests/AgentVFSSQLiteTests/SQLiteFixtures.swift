@@ -27,6 +27,12 @@ final class TemporaryDirectory {
     }
 }
 
+/// The entries of the temporary directory that belong to the library and not to a test.
+func agentTemporaryItems() throws -> Set<String> {
+    let names = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+    return Set(names.filter { $0.hasPrefix("AgentVFS") && !$0.contains("Tests-") })
+}
+
 /// Builds a database file with the real SQLite library and returns its bytes.
 func database(_ sql: String, wal: Bool = false) throws -> Data {
     let directory = try TemporaryDirectory()

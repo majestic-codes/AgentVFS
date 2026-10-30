@@ -9,7 +9,6 @@
 import AgentVFS
 import Foundation
 import SQLite3
-import Synchronization
 
 /// A read-only connection to one database file, closed when it goes.
 final class Connection {
@@ -19,38 +18,60 @@ final class Connection {
     /// The largest value the running statement may hold, from `maxValueBytes` and `maxRowBytes`.
     private var valueLimit = maxValueBytes
 
-    /// Stops a running statement at its deadline, or when the command is cancelled from another thread.
-    final class Watchdog: Sendable {
-        let deadline: ContinuousClock.Instant
-        private let expiredFlag = Atomic(false)
-        private let cancelledFlag = Atomic(false)
-
-        init(deadline: ContinuousClock.Instant) { self.deadline = deadline }
-
-        var expired: Bool { expiredFlag.load(ordering: .relaxed) }
-        var cancelled: Bool { cancelledFlag.load(ordering: .relaxed) }
-
-        func cancel() { cancelledFlag.store(true, ordering: .relaxed) }
-
-        /// Whether the statement must stop now.
-        func shouldStop() -> Bool {
-            if cancelled { return true }
-            guard ContinuousClock.now > deadline else { return false }
-            expiredFlag.store(true, ordering: .relaxed)
-            return true
+    /// Runs `body` on a read-only connection to the database in `source`, then closes it. A
+    /// database in memory is read where it is, so it stays pinned while the connection is open.
+    static func withConnection<Result>(
+        source: DownloadCache.Source,
+        watchdog: Watchdog,
+        maxTemporaryBytes: Int,
+        _ body: (Connection) throws -> Result
+    ) throws -> Result {
+        switch source {
+        case let .file(localFile):
+            let connection = try Connection(
+                file: localFile.url,
+                watchdog: watchdog,
+                maxTemporaryBytes: maxTemporaryBytes
+            )
+            return try withExtendedLifetime(connection) { try body(connection) }
+        case let .data(data):
+            return try rollbackJournalImage(of: data).withUnsafeBytes { bytes in
+                let connection = try Connection(
+                    memory: bytes,
+                    watchdog: watchdog,
+                    maxTemporaryBytes: maxTemporaryBytes
+                )
+                return try withExtendedLifetime(connection) { try body(connection) }
+            }
         }
     }
 
-    /// Opens a database file read-only. A copy never changes, so it is opened as immutable. A file
-    /// in place is first opened normally and falls back to immutable when that needs files that
-    /// cannot be opened read-only. Its `-wal` file is never found next to the descriptor it is
-    /// opened through, so it is read as of its last checkpoint.
-    init(file: URL, isCopy: Bool, watchdog: Watchdog, maxTemporaryBytes: Int) throws {
+    /// A database in memory has no `-wal` file to read, and SQLite opens a database file written in
+    /// write-ahead-log format only with one. Such an image is read as of its last checkpoint, as a
+    /// rollback-journal database, which takes a copy with the two format version bytes changed.
+    private static func rollbackJournalImage(of data: Data) -> Data {
+        let writeVersion = data.startIndex + 18
+        let readVersion = data.startIndex + 19
+        guard data.count > 19, data[writeVersion] == 2 || data[readVersion] == 2 else { return data }
+        var image = data
+        image[writeVersion] = 1
+        image[readVersion] = 1
+        return image
+    }
+
+    private init(watchdog: Watchdog, maxTemporaryBytes: Int) throws {
         self.watchdog = watchdog
         temporarySpace = try TemporarySpace(limit: maxTemporaryBytes)
+    }
+
+    /// Opens a database file in place, read-only. It is first opened normally and falls back to
+    /// immutable when that needs files that cannot be opened read-only. Its `-wal` file is never
+    /// found next to the descriptor it is opened through, so it is read as of its last checkpoint.
+    private convenience init(file: URL, watchdog: Watchdog, maxTemporaryBytes: Int) throws {
+        try self.init(watchdog: watchdog, maxTemporaryBytes: maxTemporaryBytes)
         do {
-            try open(file, immutable: isCopy)
-        } catch let first as SQLiteError where !isCopy && !watchdog.expired {
+            try open(file, immutable: false)
+        } catch let first as SQLiteError where !watchdog.expired {
             sqlite3_close_v2(handle)
             handle = nil
             do {
@@ -60,6 +81,22 @@ final class Connection {
                 throw first
             }
         }
+    }
+
+    /// Opens a database held in `bytes`, read-only, without a copy. `bytes` must stay valid and
+    /// unchanged until the connection is closed.
+    private convenience init(memory bytes: UnsafeRawBufferPointer, watchdog: Watchdog, maxTemporaryBytes: Int) throws {
+        try self.init(watchdog: watchdog, maxTemporaryBytes: maxTemporaryBytes)
+        guard let start = bytes.baseAddress else { throw SQLiteError(message: "cannot open the database") }
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_MEMORY
+        guard sqlite3_open_v2(":memory:", &handle, flags, temporarySpace.name) == SQLITE_OK, let handle else {
+            throw SQLiteError(message: lastError)
+        }
+        let size = Int64(bytes.count)
+        let mutableStart = UnsafeMutablePointer(mutating: start.assumingMemoryBound(to: UInt8.self))
+        let status = sqlite3_deserialize(handle, "main", mutableStart, size, size, UInt32(SQLITE_DESERIALIZE_READONLY))
+        guard status == SQLITE_OK else { throw SQLiteError(message: lastError) }
+        try restrict()
     }
 
     private func open(_ file: URL, immutable: Bool) throws {
@@ -72,6 +109,12 @@ final class Connection {
         guard sqlite3_open_v2(uri, &handle, flags, temporarySpace.name) == SQLITE_OK, let handle else {
             throw SQLiteError(message: lastError)
         }
+        try restrict()
+    }
+
+    /// Limits what the opened database may do and checks that it can be read.
+    private func restrict() throws {
+        guard let handle else { throw SQLiteError(message: "cannot open the database") }
         // Nothing but this one database may be reached, and no value may grow without bound.
         sqlite3_limit(handle, SQLITE_LIMIT_ATTACHED, 0)
         sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, Int32(Self.maxValueBytes))
@@ -103,63 +146,6 @@ final class Connection {
     /// Largest sum of the values in one result row: a row of many columns gets a smaller limit
     /// per value, because SQLite builds the whole row in memory before returning it.
     static let maxRowBytes = 32_000_000
-
-    /// Allows reading and nothing else: `SELECT`, `WITH`, functions other than `deniedFunctions`,
-    /// and the read-only pragmas. Writes, temporary tables, transactions, `ATTACH` and settings are refused.
-    private static let authorizer: @convention(c) (
-        UnsafeMutableRawPointer?,
-        Int32,
-        UnsafePointer<CChar>?,
-        UnsafePointer<CChar>?,
-        UnsafePointer<CChar>?,
-        UnsafePointer<CChar>?
-    ) -> Int32 = { _, action, first, second, _, _ in
-        let firstText = first.map { String(cString: $0) }
-        let secondText = second.map { String(cString: $0) }
-        return isAllowed(action: action, first: firstText, second: secondText) ? SQLITE_OK : SQLITE_DENY
-    }
-
-    /// Whether the authorizer lets `action` through. `first` and `second` are its two arguments:
-    /// for a pragma its name and value, for a function the function's name as `second`.
-    private static func isAllowed(action: Int32, first: String?, second: String?) -> Bool {
-        switch action {
-        case SQLITE_SELECT, SQLITE_READ, SQLITE_RECURSIVE:
-            true
-        case SQLITE_FUNCTION:
-            second.map { !deniedFunctions.contains($0.lowercased()) } ?? false
-        case SQLITE_PRAGMA:
-            first.map { isReadOnlyPragma(name: $0.lowercased(), argument: second) } ?? false
-        default:
-            false
-        }
-    }
-
-    private static func isReadOnlyPragma(name: String, argument: String?) -> Bool {
-        pragmasTakingName.contains(name) || (argument == nil && pragmasWithoutArgument.contains(name))
-    }
-
-    /// Functions that would reach outside the database.
-    private static let deniedFunctions: Set<String> = ["load_extension", "fts3_tokenizer"]
-
-    /// Pragmas that only report, given a table, an index or a count.
-    private static let pragmasTakingName: Set<String> = [
-        "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo",
-        "foreign_key_list", "foreign_key_check", "integrity_check", "quick_check"
-    ]
-
-    /// Pragmas that report a setting when given no value, and would change it when given one.
-    private static let pragmasWithoutArgument: Set<String> = [
-        "database_list", "collation_list", "function_list", "module_list", "pragma_list", "compile_options",
-        "encoding", "page_size", "page_count", "freelist_count", "user_version", "application_id",
-        "schema_version", "data_version", "journal_mode", "auto_vacuum", "foreign_keys"
-    ]
-
-    /// Interrupts the query (returns 1) once the watchdog passed as `context` says it must stop.
-    private static let progressHandler: @convention(c) (UnsafeMutableRawPointer?) -> Int32 = { context in
-        guard let context else { return 1 }
-        let watchdog = Unmanaged<Watchdog>.fromOpaque(context).takeUnretainedValue()
-        return watchdog.shouldStop() ? 1 : 0
-    }
 
     private var lastError: String {
         if watchdog.cancelled { return "query interrupted: the command was cancelled" }

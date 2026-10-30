@@ -67,7 +67,6 @@ struct PDFGrepCommand: WorkspaceCommand {
             guard let file = await context.openPDF(path, library: library, command: name, output: &output) else {
                 continue
             }
-            defer { file.close() }
             try await search.scan(file)
         }
         output.content(search.text)

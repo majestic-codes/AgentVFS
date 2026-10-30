@@ -253,3 +253,43 @@ struct PDFGrepTests {
         #expect(clipped.hasSuffix("…"))
     }
 }
+
+@Suite("PDF from memory")
+struct PDFMemoryTests {
+    private func shell(_ driver: InMemoryDriver, options: PDFOptions = PDFOptions()) throws -> CommandInterpreter {
+        let fileSystem = try WorkspaceFileSystem(mounts: [WorkspaceMount(name: "docs", driver: driver)])
+        return CommandInterpreter(fileSystem: fileSystem, commands: PDFTools.commands(options: options))
+    }
+
+    @Test("a PDF from a driver is read without a file on disk")
+    func readsWithoutFiles() async throws {
+        let driver = try InMemoryDriver(files: ["report.pdf": report()])
+        let shell = try shell(driver)
+        let before = try agentTemporaryItems()
+        let result = await shell.run("pdftotext -f 2 -l 2 docs/report.pdf")
+        #expect(result.output.contains("Revenue grew to 4.2 million."))
+        #expect(try agentTemporaryItems().subtracting(before).isEmpty)
+    }
+
+    @Test("a new version of a PDF replaces the cached one")
+    func newVersion() async throws {
+        let driver = try InMemoryDriver(files: ["a.pdf": PDFFixture.make([.text("first edition")])])
+        let shell = try shell(driver)
+        #expect(await shell.run("pdftotext docs/a.pdf").output.contains("first edition"))
+        try driver.put("a.pdf", data: PDFFixture.make([.text("second edition")]))
+        #expect(await shell.run("pdftotext docs/a.pdf").output.contains("second edition"))
+    }
+
+    @Test("a PDF over the cache capacity is still read")
+    func largerThanCache() async throws {
+        let driver = try InMemoryDriver(files: ["a.pdf": PDFFixture.make([.text("only once")])])
+        let shell = try shell(driver, options: PDFOptions(downloadCacheBytes: 10))
+        #expect(await shell.run("pdftotext docs/a.pdf").output.contains("only once"))
+    }
+}
+
+/// The entries of the temporary directory that belong to the library and not to a test.
+private func agentTemporaryItems() throws -> Set<String> {
+    let names = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+    return Set(names.filter { $0.hasPrefix("AgentVFS") && !$0.contains("Tests-") })
+}

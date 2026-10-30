@@ -191,7 +191,7 @@ struct SQLiteCommandTests {
         #expect(await shell.run("sqlite3 app/link.db 'SELECT 1'").output.contains("symbolic link"))
     }
 
-    @Test("downloaded copies are reused and evicted by size")
+    @Test("databases read into memory are reused and evicted by size")
     func downloadCache() async throws {
         let one = try database("CREATE TABLE a(x); INSERT INTO a VALUES (1);")
         let two = try database("CREATE TABLE b(x); INSERT INTO b VALUES (2);")
@@ -202,7 +202,7 @@ struct SQLiteCommandTests {
         #expect(await shell.run("sqlite3 d/one.db 'SELECT x FROM a'").output == "1")
         #expect(await fileSystem.metrics().filesRead == 1)
         #expect(await shell.run("sqlite3 d/one.db 'SELECT x FROM a'").output == "1")
-        #expect(await fileSystem.metrics().filesRead == 1, "the cached copy is reused")
+        #expect(await fileSystem.metrics().filesRead == 1, "the cached database is reused")
         #expect(await shell.run("sqlite3 d/two.db 'SELECT x FROM b'").output == "2")
         #expect(await fileSystem.metrics().filesRead == 2)
         #expect(await shell.run("sqlite3 d/one.db 'SELECT x FROM a'").output == "1")
@@ -260,29 +260,5 @@ struct SQLiteCommandTests {
         let wide = await shell.run("sqlite3 data/a.db \"\(doubling) SELECT \(columns) FROM c WHERE n = 22\"")
         #expect(wide.exitCode == 1)
         #expect(wide.output.contains("select fewer columns"))
-    }
-
-    @Test("a driver that streams downloads is used instead of reading the file into memory")
-    func streamingDriver() async throws {
-        struct StreamingDriver: MountDriver {
-            let database: Data
-            var info: MountInfo { MountInfo(kind: "api", source: "test") }
-            func list(_ directory: EntryRef) async throws -> [DriverEntry] {
-                [DriverEntry(name: "remote.db", kind: .file, size: database.count, id: "v1")]
-            }
-            func read(_ file: EntryRef) async throws -> FileContent { .binary(byteSize: database.count) }
-            func readExactBytes(_ file: EntryRef) async throws -> Data {
-                throw VFSError.unreadable(path: file.path, reason: "must not be read into memory")
-            }
-            func download(_ file: EntryRef, to destination: URL) async throws {
-                try database.write(to: destination)
-            }
-        }
-        let shop = try database(shopSQL)
-        let fileSystem = try workspace("api", driver: StreamingDriver(database: shop))
-        let shell = CommandInterpreter(fileSystem: fileSystem, commands: [SQLiteCommand()])
-        #expect(await shell.run("sqlite3 api/remote.db 'SELECT count(*) FROM users'").output == "3")
-        let small = CommandInterpreter(fileSystem: fileSystem, commands: [SQLiteCommand(maxDownloadBytes: 100)])
-        #expect(await small.run("sqlite3 api/remote.db 'SELECT 1'").output.contains("too large"))
     }
 }

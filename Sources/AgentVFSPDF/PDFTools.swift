@@ -11,10 +11,10 @@ import Foundation
 
 /// Limits for the PDF commands.
 public struct PDFOptions: Sendable {
-    /// Largest PDF opened: downloaded from a source without local files, or read from the
+    /// Largest PDF opened: read into memory from a source without local files, or read from the
     /// local disk when the driver has it there.
     public var maxDownloadBytes: Int
-    /// Disk space kept for downloaded PDFs, so the next command on them needs no new download.
+    /// Memory kept for PDFs read from drivers, so the next command on them needs no new read.
     public var downloadCacheBytes: Int
     /// Memory kept for page text already extracted or recognized.
     public var textCacheBytes: Int
