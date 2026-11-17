@@ -115,17 +115,6 @@ struct SleepCommandTests {
         #expect(result.output.contains("sleep: a wait lasts at most 2 seconds"))
     }
 
-    @Test("a rate limit error tells the seconds left to wait")
-    func rateLimitSeconds() throws {
-        let soon = VFSError.rateLimited(resetAt: Date.now.addingTimeInterval(90))
-        let message = try #require(soon.errorDescription)
-        #expect(message.hasPrefix("rate limit exceeded; resets in 90 seconds, at 2")
-            || message.hasPrefix("rate limit exceeded; resets in 89 seconds, at 2"))
-        let past = try #require(VFSError.rateLimited(resetAt: Date(timeIntervalSince1970: 0)).errorDescription)
-        #expect(past == "rate limit exceeded; it reset at 1970-01-01T00:00:00Z, try again")
-        #expect(VFSError.rateLimited(resetAt: nil).errorDescription == "rate limit exceeded")
-    }
-
     @Test("is a standard command with a help line")
     func listed() async throws {
         let shell = try sleepShell()
@@ -139,5 +128,36 @@ struct SleepCommandTests {
         #expect(throws: VFSError.invalidConfiguration(message)) {
             try OutputLimits(maxSleep: maxSleep).validate()
         }
+    }
+}
+
+@Suite("rate limit message")
+struct RateLimitMessageTests {
+    @Test("tells the seconds left to wait")
+    func secondsLeft() throws {
+        let soon = VFSError.rateLimited(resetAt: Date.now.addingTimeInterval(90))
+        let message = try #require(soon.errorDescription)
+        #expect(message.hasPrefix("rate limit exceeded; resets in 90 seconds, at 2")
+            || message.hasPrefix("rate limit exceeded; resets in 89 seconds, at 2"))
+    }
+
+    @Test("a reset time in the past says to try again")
+    func past() {
+        let error = VFSError.rateLimited(resetAt: Date(timeIntervalSince1970: 0))
+        #expect(error.errorDescription == "rate limit exceeded; it reset at 1970-01-01T00:00:00Z, try again")
+    }
+
+    @Test("no reset time leaves the seconds out")
+    func unknown() {
+        #expect(VFSError.rateLimited(resetAt: nil).errorDescription == "rate limit exceeded")
+    }
+
+    @Test("a reset time that cannot be counted in seconds is shown without them", arguments: [
+        TimeInterval.infinity, .nan, 1e19
+    ])
+    func uncountable(interval: TimeInterval) throws {
+        let error = VFSError.rateLimited(resetAt: Date(timeIntervalSinceNow: interval))
+        let message = try #require(error.errorDescription)
+        #expect(message.hasPrefix("rate limit exceeded; resets at "))
     }
 }

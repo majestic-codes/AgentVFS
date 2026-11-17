@@ -97,12 +97,15 @@ extension VFSError: LocalizedError {
     }
 
     /// The rate limit message, with the seconds left until `resetAt`, which is how long a `sleep` has to last.
+    /// A reset time too far away to count in seconds is shown without them.
     private static func rateLimitDescription(resetAt: Date?) -> String {
         guard let resetAt else {
             return "rate limit exceeded"
         }
         let time = resetAt.formatted(.iso8601)
-        let seconds = Int(resetAt.timeIntervalSinceNow.rounded(.up))
+        guard let seconds = Int(exactly: resetAt.timeIntervalSinceNow.rounded(.up)) else {
+            return "rate limit exceeded; resets at \(time)"
+        }
         guard seconds > 0 else {
             return "rate limit exceeded; it reset at \(time), try again"
         }

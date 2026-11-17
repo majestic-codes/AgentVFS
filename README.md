@@ -391,16 +391,18 @@ The agent cannot change anything, leave `/workspace` or bring the app down. What
 - **Memory.** Command output is limited (`maxBytes`, or `maxPipeBytes` in a pipe), `sort` reads up to 64 MB and a
   million lines across all files together, a pipe holds up to 16 commands, `uniq`, `cut` and `wc` read line by line,
   and a line longer than 1 MB is cut.
-- **Time.** Every command but `sleep` has the `OutputLimits.timeLimit` limit (15 s). It is also the ceiling for `sqlite3`, `jq`,
-  PDF and API commands, whose own timeouts can only shorten it. Globs match without backtracking (up to 1000
-  characters long, `{}` nested up to 10 deep). A regular expression stops at the deadline, so `(a+)+$` cannot hang a
-  command: the search says it is incomplete. Matching runs outside the workspace actor, so a slow expression does not
-  block other operations. `find` visits up to 500,000 entries. Cancelling the task stops a command inside its loops.
+- **Time.** Every command but `sleep` has the `OutputLimits.timeLimit` limit (15 s). It is also the ceiling for
+  `sqlite3`, `jq`, PDF and API commands, whose own timeouts can only shorten it. Globs match without backtracking (up
+  to 1000 characters long, `{}` nested up to 10 deep). A regular expression stops at the deadline, so `(a+)+$` cannot
+  hang a command: the search says it is incomplete. Matching runs outside the workspace actor, so a slow expression
+  does not block other operations. `find` visits up to 500,000 entries. Cancelling the task stops a command inside its
+  loops.
 - **Waiting.** `sleep SECONDS` lets the agent wait out a rate limit before it tries again. It is the one command
   `timeLimit` does not bound: its ceiling is `OutputLimits.maxSleep` (60 s), a longer wait is refused with the
   ceiling in the message, and cancelling the task ends the wait at once. A `VFSError.rateLimited` with a reset time
-  tells the agent the seconds left. One call may now last as long as `maxSleep`, so keep it under the tool-call timeout
-  of your host. To leave `sleep` out, pass `includeStandardCommands: false` and `StandardCommands.all` without it.
+  tells the agent the seconds left. One call lasts as long as `maxSleep` at most, so keep it under the tool-call
+  timeout of your host. To leave `sleep` out, pass `includeStandardCommands: false` and `StandardCommands.all`
+  without it.
 - **Output.** Names with control characters, bidirectional controls or zero-width characters are not shown. `vfsh`
   escapes control characters in file contents (`TerminalText.escaped`), so a file cannot control the terminal.
 - **API errors.** The agent sees the text of an error thrown by `fetchPage`, so it must not contain tokens or URLs
