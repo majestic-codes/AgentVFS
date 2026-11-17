@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// The built-in read-only commands, in `help` order.
+/// The built-in commands, in `help` order. None of them changes the workspace.
 public enum StandardCommands {
     /// `ls`: lists directories.
     public static let list = Command(
@@ -102,8 +102,14 @@ public enum StandardCommands {
         CommandOutput(text: context.workingDirectory.description + "\n", exitCode: 0)
     }
 
+    /// `sleep`: waits, as before trying again after a rate limit.
+    public static let sleep = Command(
+        "sleep",
+        usage: "sleep SECONDS                      wait before trying again, as after a rate limit"
+    ) { arguments, context in try await context.sleep(arguments) }
+
     /// Every standard command, in `help` order.
     public static let all: [any WorkspaceCommand] = [
-        list, cat, head, tail, sed, find, grep, ripgrep, wordCount, sort, uniq, cut, changeDirectory, pwd
+        list, cat, head, tail, sed, find, grep, ripgrep, wordCount, sort, uniq, cut, changeDirectory, pwd, sleep
     ]
 }

@@ -2,14 +2,14 @@
 
 An emulated file environment for an AI agent. Any source (a local folder, a remote repository, any API) appears as a
 folder under `/workspace`, and the agent works with it through a small set of Unix commands: `ls cat head tail sed
-find grep rg wc sort uniq cut pwd cd`.
+find grep rg wc sort uniq cut pwd cd sleep`.
 Everything is read-only. There is no real shell, nothing is executed, and nothing outside `/workspace` is reachable.
 
 The package depends on no particular source and no particular agent. Drivers for other systems and the adapter to
 an agent are built on top of it.
 
 ```text
-CommandInterpreter     ls cat head tail sed find grep rg wc sort uniq cut pwd cd + your commands
+CommandInterpreter     ls cat head tail sed find grep rg wc sort uniq cut pwd cd sleep + your commands
         │
 WorkspaceFileSystem    /workspace, paths, listing and content caches, find, search, limits
         │
@@ -396,6 +396,9 @@ The agent cannot change anything, leave `/workspace` or bring the app down. What
   characters long, `{}` nested up to 10 deep). A regular expression stops at the deadline, so `(a+)+$` cannot hang a
   command: the search says it is incomplete. Matching runs outside the workspace actor, so a slow expression does not
   block other operations. `find` visits up to 500,000 entries. Cancelling the task stops a command inside its loops.
+- **Waiting.** `sleep SECONDS` lets the agent wait out a rate limit before it tries again. It is the one command
+  `timeLimit` does not bound: its ceiling is `OutputLimits.maxSleep` (60 s), a longer wait is refused with the
+  ceiling in the message, and cancelling the task ends the wait at once.
 - **Output.** Names with control characters, bidirectional controls or zero-width characters are not shown. `vfsh`
   escapes control characters in file contents (`TerminalText.escaped`), so a file cannot control the terminal.
 - **API errors.** The agent sees the text of an error thrown by `fetchPage`, so it must not contain tokens or URLs
