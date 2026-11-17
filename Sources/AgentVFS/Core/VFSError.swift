@@ -84,11 +84,7 @@ extension VFSError: LocalizedError {
         case let .unauthorized(reason):
             "authorization failed: \(reason)"
         case let .rateLimited(resetAt):
-            if let resetAt {
-                "rate limit exceeded; resets at \(resetAt.formatted(.iso8601))"
-            } else {
-                "rate limit exceeded"
-            }
+            Self.rateLimitDescription(resetAt: resetAt)
         case let .network(reason):
             "network error: \(reason)"
         case let .api(status, message):
@@ -98,5 +94,21 @@ extension VFSError: LocalizedError {
         case .timeLimitReached:
             "time limit reached before the input was read to the end; narrow it first, for example with grep or head"
         }
+    }
+
+    /// The rate limit message, with the seconds left until `resetAt`, which is how long a `sleep` has to last.
+    /// A reset time too far away to count in seconds is shown without them.
+    private static func rateLimitDescription(resetAt: Date?) -> String {
+        guard let resetAt else {
+            return "rate limit exceeded"
+        }
+        let time = resetAt.formatted(.iso8601)
+        guard let seconds = Int(exactly: resetAt.timeIntervalSinceNow.rounded(.up)) else {
+            return "rate limit exceeded; resets at \(time)"
+        }
+        guard seconds > 0 else {
+            return "rate limit exceeded; it reset at \(time), try again"
+        }
+        return "rate limit exceeded; resets in \(seconds) \(seconds == 1 ? "second" : "seconds"), at \(time)"
     }
 }

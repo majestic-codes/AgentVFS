@@ -24,8 +24,10 @@ public struct OutputLimits: Sendable, Hashable {
     /// held to `maxBytes`, so `sort | uniq -c` or `wc -l` see the whole data.
     public var maxPipeBytes: Int
     /// How long one command may run. A command past it stops with "time limit reached". This is the
-    /// ceiling for every command, and a tool's own timeout, such as `sqlite3`'s, can only shorten it.
+    /// ceiling for every command but `sleep`, and a tool's own timeout, such as `sqlite3`'s, can only shorten it.
     public var timeLimit: Duration
+    /// The longest wait of one `sleep`. A longer one is refused.
+    public var maxSleep: Duration
 
     /// Limits that suit a model's context window.
     public init(
@@ -35,7 +37,8 @@ public struct OutputLimits: Sendable, Hashable {
         maxFindEntries: Int = 1000,
         maxSearchFileBytes: Int = 512_000,
         maxPipeBytes: Int = 8_000_000,
-        timeLimit: Duration = .seconds(15)
+        timeLimit: Duration = .seconds(15),
+        maxSleep: Duration = .seconds(60)
     ) {
         self.maxBytes = maxBytes
         self.maxLines = maxLines
@@ -44,13 +47,14 @@ public struct OutputLimits: Sendable, Hashable {
         self.maxSearchFileBytes = maxSearchFileBytes
         self.maxPipeBytes = maxPipeBytes
         self.timeLimit = timeLimit
+        self.maxSleep = maxSleep
     }
 
     /// Largest value a count limit may have, so the limit plus one still fits in an `Int`.
     static let maxCount = Int.max / 2
 
     /// Throws `VFSError.invalidConfiguration` unless every count is between 1 and `Int.max / 2`
-    /// and the time limit is positive.
+    /// and the time limit and the longest sleep are positive.
     public func validate() throws {
         let counts = [
             ("maxBytes", maxBytes), ("maxLines", maxLines), ("maxSearchMatches", maxSearchMatches),
@@ -63,6 +67,9 @@ public struct OutputLimits: Sendable, Hashable {
         }
         guard timeLimit > .zero else {
             throw VFSError.invalidConfiguration("OutputLimits.timeLimit must be positive, not \(timeLimit)")
+        }
+        guard maxSleep > .zero else {
+            throw VFSError.invalidConfiguration("OutputLimits.maxSleep must be positive, not \(maxSleep)")
         }
     }
 
