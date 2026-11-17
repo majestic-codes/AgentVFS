@@ -19,20 +19,22 @@ extension CommandContext {
             let plainNumber = FloatingPointFormatStyle<Double>(locale: Locale(identifier: "en_US_POSIX"))
                 .grouping(.never)
                 .precision(.fractionLength(0...3))
+                .rounded(rule: .down)
             let limit = longest.formatted(plainNumber)
-            output.fail("sleep", "a wait lasts at most \(limit) seconds; wait that long, then check again", code: 2)
+            let unit = limit == "1" ? "second" : "seconds"
+            output.fail("sleep", "a wait lasts at most \(limit) \(unit); wait that long, then check again", code: 2)
             return output
         }
         try await Task.sleep(for: .seconds(seconds))
         return CommandOutput()
     }
 
-    /// The number `text` writes with digits and at most one fraction, such as `30` or `0.5`.
+    /// The number `text` writes with ASCII digits and at most one fraction, such as `30` or `0.5`.
     private static func seconds(_ text: String) -> Double? {
-        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
-        let digits: ClosedRange<Character> = "0"..."9"
+        let parts = text.utf8.split(separator: UInt8(ascii: "."), omittingEmptySubsequences: false)
+        let digits = UInt8(ascii: "0")...UInt8(ascii: "9")
         let isNumber = parts.count <= 2 && parts.allSatisfy { part in
-            part.isEmpty == false && part.allSatisfy(digits.contains)
+            !part.isEmpty && part.allSatisfy(digits.contains)
         }
         guard isNumber else {
             return nil
