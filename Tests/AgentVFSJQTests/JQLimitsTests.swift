@@ -60,7 +60,7 @@ struct JQLimitsTests {
         String(repeating: "\"\\(", count: 20000) + "1" + String(repeating: ")\"", count: 20000),
         String(repeating: "try ", count: 20000) + "1",
         ". as " + String(repeating: "[", count: 20000) + "$a" + String(repeating: "]", count: 20000) + " | 1"
-    ])
+    ] as [String])
     func deepFilters(filter: String) async {
         let result = await runNull(filter)
         #expect(result.exitCode == 3)
