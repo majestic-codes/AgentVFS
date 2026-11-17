@@ -177,6 +177,6 @@ struct GrepSearch {
         let windowEnd = line.index(windowStart, offsetBy: maxLineCharacters)
         let head = start > 0 ? "…" : ""
         let tail = windowEnd < line.endIndex ? "…" : ""
-        return head + line[windowStart..<windowEnd] + tail
+        return head + String(line[windowStart..<windowEnd]) + tail
     }
 }
